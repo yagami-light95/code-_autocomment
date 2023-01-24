@@ -1,3 +1,4 @@
+
 import tensorflow as tf
 import time
 import numpy as np
@@ -12,10 +13,10 @@ def positional_encoding(position, d_model):
                             np.arange(d_model)[np.newaxis, :],
                             d_model)
 
-
+    # 将 sin 应用于数组中的偶数索引（indices）；2i
     angle_rads[:, 0::2] = np.sin(angle_rads[:, 0::2])
 
-
+    # 将 cos 应用于数组中的奇数索引；2i+1
     angle_rads[:, 1::2] = np.cos(angle_rads[:, 1::2])
 
     pos_encoding = angle_rads[np.newaxis, ...]
@@ -26,6 +27,8 @@ def positional_encoding(position, d_model):
 def create_padding_mask(seq):
     seq = tf.cast(tf.math.equal(seq, 0), tf.float32)
 
+    # 添加额外的维度来将填充加到
+    # 注意力对数（logits）。
     return seq[:, tf.newaxis, tf.newaxis, :]  # (batch_size, 1, 1, seq_len)
 
 
@@ -35,13 +38,15 @@ def create_look_ahead_mask(size):
 
 
 def create_masks(inp, tar):
-
+    # 编码器填充遮挡
     enc_padding_mask = create_padding_mask(inp)
 
-
+    # 在解码器的第二个注意力模块使用。
+    # 该填充遮挡用于遮挡编码器的输出。
     dec_padding_mask = create_padding_mask(inp)
 
-
+    # 在解码器的第一个注意力模块使用。
+    # 用于填充（pad）和遮挡（mask）解码器获取到的输入的后续标记（future tokens）。
     look_ahead_mask = create_look_ahead_mask(tf.shape(tar)[1])
     dec_target_padding_mask = create_padding_mask(tar)
     combined_mask = tf.maximum(dec_target_padding_mask, look_ahead_mask)
@@ -56,11 +61,12 @@ def scaled_dot_product_attention(q, k, v, mask):
     dk = tf.cast(tf.shape(k)[-1], tf.float32)
     scaled_attention_logits = matmul_qk / tf.math.sqrt(dk)
 
-
+  # 将 mask 加入到缩放的张量上。
     if mask is not None:
         scaled_attention_logits += (mask * -1e9)
 
-
+  # softmax 在最后一个轴（seq_len_k）上归一化，因此分数
+  # 相加等于1。
     attention_weights = tf.nn.softmax(scaled_attention_logits, axis=-1)  # (..., seq_len_q, seq_len_k)
 
     output = tf.matmul(attention_weights, v)  # (..., seq_len_q, depth_v)
@@ -204,7 +210,7 @@ class Encoder(tf.keras.layers.Layer):
     def call(self, x, training, mask):
         seq_len = tf.shape(x)[1]
 
-  
+        # 将嵌入和位置编码相加。
         x = self.embedding(x)  # (batch_size, input_seq_len, d_model)
         x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
         x += self.pos_encoding[:, :seq_len, :]

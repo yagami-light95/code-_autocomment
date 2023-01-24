@@ -1,11 +1,12 @@
 
 import tensorflow as tf
 from tensorflow import keras
+from tqdm import tqdm
 
-# 编码器
-class Encoder(tf.keras.Model):
+
+class sEncoder(tf.keras.Model):
     def __init__(self, vocab_size, embedding_dim, encoding_units, batch_size):
-        super(Encoder, self).__init__()
+        super(sEncoder, self).__init__()
 
         self.batch_size = batch_size
         self.encoding_units = encoding_units
@@ -30,7 +31,7 @@ class Encoder(tf.keras.Model):
     def init_hidden_state(self):
         return tf.zeros((self.batch_size, self.encoding_units))
 
-# 注意力机制
+
 class bahdanauAttention(tf.keras.Model):
 
     def __init__(self, units):
@@ -39,7 +40,7 @@ class bahdanauAttention(tf.keras.Model):
         self.w2 = tf.keras.layers.Dense(units)
         self.v = tf.keras.layers.Dense(1)
 
-    def call(self, decoder_hidden, code_encoder_output, sbt_encoder_output):
+    def call(self, decoder_hidden, code_encoder_output):
         # print("初始输入：")
         # print("hidden",decoder_hidden.shape)
         # print("code",code_encoder_output.shape)
@@ -58,23 +59,14 @@ class bahdanauAttention(tf.keras.Model):
         # context=sum(attention_weigths*EO,axis=1)
         code_context = tf.reduce_sum(code_attention_weights * code_encoder_output, axis=1)
 
-        # 计算sbt_encoder
-
-        sbt_score = self.v(tf.nn.tanh(self.w1(sbt_encoder_output) + self.w2(hidden_with_time_axis)))
-        sbt_attention_weights = tf.nn.softmax(sbt_score, axis=1)
-        sbt_context = tf.reduce_sum(sbt_attention_weights * sbt_encoder_output, axis=1)
-
-        # 二者相加
-        attention_weights = code_attention_weights + sbt_attention_weights
-        context = code_context + sbt_context
         # print("at结束",context.shape)
-        return context, attention_weights
+        return code_context
 
-# 解码器
-class Decoder(tf.keras.Model):
+
+class sDecoder(tf.keras.Model):
 
     def __init__(self, vocab_size, embedding_dim, decoding_units, batch_size):
-        super(Decoder, self).__init__()
+        super(sDecoder, self).__init__()
 
         self.batch_size = batch_size
         self.decoding_units = decoding_units
@@ -89,8 +81,8 @@ class Decoder(tf.keras.Model):
         # self.drop=keras.layers.Dropout(0.5)
         self.attention = bahdanauAttention(self.decoding_units)
 
-    def call(self, x, hidden, code_encoding_output, sbt_encodeing_output):
-        context_vector, attention_weights = self.attention(hidden, code_encoding_output, sbt_encodeing_output)
+    def call(self, x, hidden, code_encoding_output):
+        context_vector = self.attention(hidden, code_encoding_output)
         # print("context:",context_vector.shape)
         x = self.embedding(x)
 
@@ -102,12 +94,48 @@ class Decoder(tf.keras.Model):
 
         x = self.fc(output)
 
-        return x, state, attention_weights
+        return x, state
 
 
-# 超参数
-# batch_size=128
-# units=256
-# embedding_dim=256
-# vocab_maxlen=30000
+def seq2seq_onlycode_evaluate(code,units,nl_lang,nl_maxlen,train_code_encoder,decoder):
+    code = tf.expand_dims(code, axis=0)
 
+    # print(code.shape)
+    result = ''
+
+    # hidden是一维的，输入只有一个
+    hidden = [tf.zeros((1, units))]
+    # code:(1,500) hidden(1,2)
+    # out:(1,500,2)
+    code_encoding_out, code_encoding_hidden = train_code_encoder(code, hidden)
+
+    decoding_hidden = code_encoding_hidden
+
+    # decoder input shape=(1,1)
+    decoding_input = tf.expand_dims([nl_lang.word_index['<start>']], 0)
+
+    for t in range(nl_maxlen):
+        pred, decoding_hidden = decoder(decoding_input, decoding_hidden, code_encoding_out)
+
+        # 取预测结果中概率最大的值
+        pred_id = tf.argmax(pred[0]).numpy()
+
+        if nl_lang.index_word[pred_id] == '<end>':
+            return result
+
+        result += nl_lang.index_word[pred_id] + ' '
+
+        # fed back
+        decoding_input = tf.expand_dims([pred_id], 0)
+
+    return result
+
+
+def seq2seq_onlycode_translate(tensor, path,units,nl_lang,nl_maxlen,train_code_encoder,decoder,num=None):
+    if num==None:
+        num=len(tensor)
+    with open(path, 'w+') as targ:
+        for i in tqdm(range(num)):
+            can = seq2seq_onlycode_evaluate(tensor[i],units,nl_lang,nl_maxlen,train_code_encoder,decoder)
+            #print(can)
+            targ.write(can + '\n')
